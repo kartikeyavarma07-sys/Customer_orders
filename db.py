@@ -275,21 +275,28 @@ class MySQLCollection:
         self.table = table_name
 
     def _execute(self, query, params=None, fetch="all"):
-        conn = self.mgr._get_connection()
-        try:
-            with conn.cursor() as cur:
-                cur.execute(query, params or ())
-                if fetch == "all":
-                    res = cur.fetchall()
-                elif fetch == "one":
-                    res = cur.fetchone()
-                else:
-                    res = cur.rowcount
-            conn.commit()
-            return res
-        except Exception as e:
-            conn.rollback()
-            raise e
+        for attempt in range(2):
+            conn = self.mgr._get_connection()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(query, params or ())
+                    if fetch == "all":
+                        res = cur.fetchall()
+                    elif fetch == "one":
+                        res = cur.fetchone()
+                    else:
+                        res = cur.rowcount
+                conn.commit()
+                return res
+            except Exception as e:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                if attempt == 0:
+                    self.mgr.connect(force=True)
+                    continue
+                raise e
 
     def find(self, filter_query=None, sort=None):
         sql = f"SELECT * FROM `{self.table}`"
@@ -513,6 +520,7 @@ class DatabaseManager:
             self.connect(force=True)
         try:
             self.mysql_conn.ping(reconnect=True)
+            self.mysql_conn.select_db(MYSQL_DB)
         except Exception:
             self.connect(force=True)
         return self.mysql_conn
@@ -527,22 +535,35 @@ class DatabaseManager:
             import pymysql
             import pymysql.cursors
 
-            # Step 1: Connect to MySQL server
+            # Step 1: Ensure database exists
+            try:
+                init_conn = pymysql.connect(
+                    host=MYSQL_HOST,
+                    port=MYSQL_PORT,
+                    user=MYSQL_USER,
+                    password=MYSQL_PASSWORD,
+                    charset="utf8mb4",
+                    connect_timeout=3
+                )
+                with init_conn.cursor() as cur:
+                    cur.execute(f"CREATE DATABASE IF NOT EXISTS `{MYSQL_DB}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
+                init_conn.commit()
+                init_conn.close()
+            except Exception as ex:
+                logger.warning(f"Database creation check: {ex}")
+
+            # Step 2: Connect directly bound to MYSQL_DB
             conn = pymysql.connect(
                 host=MYSQL_HOST,
                 port=MYSQL_PORT,
                 user=MYSQL_USER,
                 password=MYSQL_PASSWORD,
+                database=MYSQL_DB,
                 charset="utf8mb4",
                 cursorclass=pymysql.cursors.DictCursor,
-                connect_timeout=3
+                connect_timeout=3,
+                autocommit=True
             )
-
-            # Step 2: Create Database if not exists
-            with conn.cursor() as cur:
-                cur.execute(f"CREATE DATABASE IF NOT EXISTS `{MYSQL_DB}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
-            conn.commit()
-            conn.select_db(MYSQL_DB)
 
             self.mysql_conn = conn
             self.db = conn
