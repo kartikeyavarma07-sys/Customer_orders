@@ -546,21 +546,30 @@ class DatabaseManager:
                 pass
         self._local.conn = None
 
+    def _get_connect_kwargs(self, db_name=None):
+        kw = {
+            "host": MYSQL_HOST,
+            "port": MYSQL_PORT,
+            "user": MYSQL_USER,
+            "password": MYSQL_PASSWORD,
+            "charset": "utf8mb4",
+            "connect_timeout": 5,
+            "autocommit": True
+        }
+        if db_name:
+            kw["database"] = db_name
+        if os.getenv("MYSQL_SSL", "").lower() in ("true", "1", "yes") or MYSQL_HOST not in ("localhost", "127.0.0.1", "0.0.0.0"):
+            kw["ssl_verify_cert"] = False
+            kw["ssl_verify_identity"] = False
+        return kw
+
     def _create_thread_conn(self):
         """Instantiate a new dedicated connection for the calling thread."""
         import pymysql
         import pymysql.cursors
-        return pymysql.connect(
-            host=MYSQL_HOST,
-            port=MYSQL_PORT,
-            user=MYSQL_USER,
-            password=MYSQL_PASSWORD,
-            database=MYSQL_DB,
-            charset="utf8mb4",
-            cursorclass=pymysql.cursors.DictCursor,
-            connect_timeout=4,
-            autocommit=True
-        )
+        kw = self._get_connect_kwargs(MYSQL_DB)
+        kw["cursorclass"] = pymysql.cursors.DictCursor
+        return pymysql.connect(**kw)
 
     def _get_connection(self):
         """Get or initialize thread-local MySQL connection."""
@@ -604,14 +613,7 @@ class DatabaseManager:
 
                 # Step 1: Ensure target database exists
                 try:
-                    init_conn = pymysql.connect(
-                        host=MYSQL_HOST,
-                        port=MYSQL_PORT,
-                        user=MYSQL_USER,
-                        password=MYSQL_PASSWORD,
-                        charset="utf8mb4",
-                        connect_timeout=3
-                    )
+                    init_conn = pymysql.connect(**self._get_connect_kwargs())
                     with init_conn.cursor() as cur:
                         cur.execute(f"CREATE DATABASE IF NOT EXISTS `{MYSQL_DB}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
                     init_conn.commit()
@@ -620,17 +622,9 @@ class DatabaseManager:
                     logger.warning(f"Database creation check: {ex}")
 
                 # Step 2: Establish test connection directly bound to target DB
-                test_conn = pymysql.connect(
-                    host=MYSQL_HOST,
-                    port=MYSQL_PORT,
-                    user=MYSQL_USER,
-                    password=MYSQL_PASSWORD,
-                    database=MYSQL_DB,
-                    charset="utf8mb4",
-                    cursorclass=pymysql.cursors.DictCursor,
-                    connect_timeout=3,
-                    autocommit=True
-                )
+                kw = self._get_connect_kwargs(MYSQL_DB)
+                kw["cursorclass"] = pymysql.cursors.DictCursor
+                test_conn = pymysql.connect(**kw)
 
                 self._ensure_mysql_schema(test_conn)
                 self._sync_local_to_mysql(test_conn)
