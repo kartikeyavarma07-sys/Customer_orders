@@ -15,6 +15,24 @@ from bson import ObjectId
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("OrderApp.DB")
 
+def _load_dotenv(filepath=None):
+    if filepath is None:
+        filepath = os.path.join(os.path.dirname(__file__), ".env")
+    if os.path.exists(filepath):
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, v = line.split("=", 1)
+                        k, v = k.strip(), v.strip().strip("'\"")
+                        if k and k not in os.environ:
+                            os.environ[k] = v
+        except Exception as e:
+            logger.warning(f"Could not load .env file: {e}")
+
+_load_dotenv()
+
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
 DB_NAME = os.getenv("MONGO_DB_NAME", "order_management_db")
 LOCAL_STORE_PATH = os.path.join(os.path.dirname(__file__), "data", "db_store.json")
