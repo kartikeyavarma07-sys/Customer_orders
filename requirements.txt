@@ -1,0 +1,3 @@
+# OrderFlow Requirements
+pymongo>=4.6.0
+bson>=0.5.10

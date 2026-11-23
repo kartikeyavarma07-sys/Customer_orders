@@ -1,0 +1,281 @@
+{
+  "customers": [
+    {
+      "_id": "6b03e7d2c035a79b31ce11fb",
+      "customer_id": "CUST-66317",
+      "name": "Sarah Jenkins",
+      "email": "sarah.j@example.com",
+      "phone": "+1 (555) 234-5678",
+      "address": "742 Evergreen Terrace",
+      "city": "Springfield",
+      "notes": "VIP Corporate Client",
+      "created_at": "2026-11-23T12:44:26.318552",
+      "updated_at": "2026-11-23T12:44:26.318552"
+    },
+    {
+      "_id": "6b03e7d2c035a79b31ce11fc",
+      "customer_id": "CUST-66320",
+      "name": "Michael Chang",
+      "email": "m.chang@techpulse.io",
+      "phone": "+1 (555) 876-5432",
+      "address": "120 Silicon Way, Suite 400",
+      "city": "San Jose",
+      "notes": "Prefers priority shipping",
+      "created_at": "2026-11-23T12:44:26.320853",
+      "updated_at": "2026-11-23T12:44:26.320853"
+    },
+    {
+      "_id": "6b03e7d2c035a79b31ce11fd",
+      "customer_id": "CUST-66321",
+      "name": "Emma Watson",
+      "email": "emma.watson@designhub.co",
+      "phone": "+1 (555) 345-6789",
+      "address": "45 Kensington Crescent",
+      "city": "London",
+      "notes": "Monthly recurring purchaser",
+      "created_at": "2026-11-23T12:44:26.321911",
+      "updated_at": "2026-11-23T12:44:26.321911"
+    },
+    {
+      "_id": "6b03e7d2c035a79b31ce11fe",
+      "customer_id": "CUST-66322",
+      "name": "Rajesh Kumar",
+      "email": "rajesh.kumar@infotech.in",
+      "phone": "+91 98765 43210",
+      "address": "Plot 14, Electronic City",
+      "city": "Bengaluru",
+      "notes": "Bulk office supplier",
+      "created_at": "2026-11-23T12:44:26.322438",
+      "updated_at": "2026-11-23T12:44:26.322438"
+    },
+    {
+      "_id": "6b03e7d2c035a79b31ce11ff",
+      "customer_id": "CUST-66323",
+      "name": "Olivia Martinez",
+      "email": "olivia.m@creativeworks.net",
+      "phone": "+1 (555) 901-2345",
+      "address": "88 Ocean Drive",
+      "city": "Miami",
+      "notes": "New customer via referral",
+      "created_at": "2026-11-23T12:44:26.323493",
+      "updated_at": "2026-11-23T12:44:26.323493"
+    }
+  ],
+  "items": [
+    {
+      "_id": "6b03e7d2c035a79b31ce1200",
+      "item_code": "LAP-001",
+      "name": "ProBook Ultra 15-inch Laptop",
+      "category": "Electronics",
+      "price": 1299.99,
+      "stock": 22,
+      "description": "Intel Core i7 13th Gen, 16GB DDR5 RAM, 512GB NVMe SSD",
+      "created_at": "2026-11-23T12:44:26.324020",
+      "updated_at": "2026-11-23T12:44:26.324020"
+    },
+    {
+      "_id": "6b03e7d2c035a79b31ce1201",
+      "item_code": "MOU-002",
+      "name": "Ergonomic Wireless Mouse",
+      "category": "Accessories",
+      "price": 49.5,
+      "stock": 78,
+      "description": "Silent click, dual Bluetooth & 2.4GHz wireless connection",
+      "created_at": "2026-11-23T12:44:26.324538",
+      "updated_at": "2026-11-23T12:44:26.324538"
+    },
+    {
+      "_id": "6b03e7d2c035a79b31ce1202",
+      "item_code": "KEY-003",
+      "name": "RGB Mechanical Keyboard",
+      "category": "Accessories",
+      "price": 89.0,
+      "stock": 45,
+      "description": "Hot-swappable brown switches with detachable USB-C cable",
+      "created_at": "2026-11-23T12:44:26.325066",
+      "updated_at": "2026-11-23T12:44:26.325066"
+    },
+    {
+      "_id": "6b03e7d2c035a79b31ce1203",
+      "item_code": "MON-004",
+      "name": "4K Ultra-Wide Monitor 34\"",
+      "category": "Electronics",
+      "price": 549.99,
+      "stock": 11,
+      "description": "Curved IPS display, 144Hz refresh rate, USB-C 90W power delivery",
+      "created_at": "2026-11-23T12:44:26.325066",
+      "updated_at": "2026-11-23T12:44:26.325066"
+    },
+    {
+      "_id": "6b03e7d2c035a79b31ce1204",
+      "item_code": "CHR-005",
+      "name": "ErgoComfort Office Chair",
+      "category": "Furniture",
+      "price": 289.0,
+      "stock": 2,
+      "description": "Breathable mesh back with adjustable lumbar support and 3D armrests",
+      "created_at": "2026-11-23T12:44:26.325066",
+      "updated_at": "2026-11-23T12:44:26.325066"
+    },
+    {
+      "_id": "6b03e7d2c035a79b31ce1205",
+      "item_code": "DSK-006",
+      "name": "Motorized Standing Desk",
+      "category": "Furniture",
+      "price": 450.0,
+      "stock": 7,
+      "description": "Dual-motor electric height adjustment, walnut tabletop 140x70cm",
+      "created_at": "2026-11-23T12:44:26.326072",
+      "updated_at": "2026-11-23T12:44:26.326072"
+    },
+    {
+      "_id": "6b03e7d2c035a79b31ce1206",
+      "item_code": "NOT-007",
+      "name": "Executive Hardcover Notebook",
+      "category": "Stationery",
+      "price": 14.99,
+      "stock": 149,
+      "description": "160 pages, 120gsm acid-free bleedproof paper with pen loop",
+      "created_at": "2026-11-23T12:44:26.327074",
+      "updated_at": "2026-11-23T12:44:26.327074"
+    },
+    {
+      "_id": "6b03e7d2c035a79b31ce1207",
+      "item_code": "PEN-008",
+      "name": "Precision Gel Pens (Set of 6)",
+      "category": "Stationery",
+      "price": 9.99,
+      "stock": 3,
+      "description": "0.5mm quick-dry black ink pens for smooth documentation",
+      "created_at": "2026-11-23T12:44:26.328082",
+      "updated_at": "2026-11-23T12:44:26.328082"
+    }
+  ],
+  "orders": [
+    {
+      "_id": "6b03e7d2c035a79b31ce1208",
+      "order_number": "ORD-2026-66334",
+      "customer_id": "CUST-66323",
+      "customer_name": "Olivia Martinez",
+      "customer_email": "olivia.m@creativeworks.net",
+      "customer_phone": "+1 (555) 901-2345",
+      "customer_address": "88 Ocean Drive",
+      "customer_city": "Miami",
+      "items": [
+        {
+          "item_code": "MON-004",
+          "name": "4K Ultra-Wide Monitor 34\"",
+          "category": "Electronics",
+          "price": 549.99,
+          "quantity": 1,
+          "subtotal": 549.99
+        },
+        {
+          "item_code": "CHR-005",
+          "name": "ErgoComfort Office Chair",
+          "category": "Furniture",
+          "price": 289.0,
+          "quantity": 2,
+          "subtotal": 578.0
+        }
+      ],
+      "item_count": 3,
+      "subtotal": 1127.99,
+      "discount_pct": 5.0,
+      "discount_amount": 56.4,
+      "tax_pct": 8.0,
+      "tax_amount": 85.73,
+      "total": 1157.32,
+      "status": "Completed",
+      "payment_status": "Paid",
+      "notes": "First order discount applied",
+      "created_at": "2026-11-23T12:44:26.334072",
+      "updated_at": "2026-11-23T12:44:26.334072"
+    },
+    {
+      "_id": "6b03e7d2c035a79b31ce1209",
+      "order_number": "ORD-2026-66338",
+      "customer_id": "CUST-66322",
+      "customer_name": "Rajesh Kumar",
+      "customer_email": "rajesh.kumar@infotech.in",
+      "customer_phone": "+91 98765 43210",
+      "customer_address": "Plot 14, Electronic City",
+      "customer_city": "Bengaluru",
+      "items": [
+        {
+          "item_code": "MOU-002",
+          "name": "Ergonomic Wireless Mouse",
+          "category": "Accessories",
+          "price": 49.5,
+          "quantity": 2,
+          "subtotal": 99.0
+        },
+        {
+          "item_code": "NOT-007",
+          "name": "Executive Hardcover Notebook",
+          "category": "Stationery",
+          "price": 14.99,
+          "quantity": 1,
+          "subtotal": 14.99
+        }
+      ],
+      "item_count": 3,
+      "subtotal": 113.99,
+      "discount_pct": 0.0,
+      "discount_amount": 0.0,
+      "tax_pct": 8.0,
+      "tax_amount": 9.12,
+      "total": 123.11,
+      "status": "Processing",
+      "payment_status": "Paid",
+      "notes": "Express delivery requested",
+      "created_at": "2026-11-23T12:44:26.338073",
+      "updated_at": "2026-11-23T12:44:26.338073"
+    },
+    {
+      "_id": "6b03e7d2c035a79b31ce120a",
+      "order_number": "ORD-2026-66339",
+      "customer_id": "CUST-66321",
+      "customer_name": "Emma Watson",
+      "customer_email": "emma.watson@designhub.co",
+      "customer_phone": "+1 (555) 345-6789",
+      "customer_address": "45 Kensington Crescent",
+      "customer_city": "London",
+      "items": [
+        {
+          "item_code": "DSK-006",
+          "name": "Motorized Standing Desk",
+          "category": "Furniture",
+          "price": 450.0,
+          "quantity": 1,
+          "subtotal": 450.0
+        },
+        {
+          "item_code": "LAP-001",
+          "name": "ProBook Ultra 15-inch Laptop",
+          "category": "Electronics",
+          "price": 1299.99,
+          "quantity": 3,
+          "subtotal": 3899.97
+        }
+      ],
+      "item_count": 4,
+      "subtotal": 4349.97,
+      "discount_pct": 10.0,
+      "discount_amount": 435.0,
+      "tax_pct": 5.0,
+      "tax_amount": 195.75,
+      "total": 4110.72,
+      "status": "Pending",
+      "payment_status": "Pending",
+      "notes": "Invoice sent via email",
+      "created_at": "2026-11-23T12:44:26.340071",
+      "updated_at": "2026-11-23T12:44:26.340071"
+    }
+  ],
+  "counters": {
+    "customer_seq": 1000,
+    "item_seq": 100,
+    "order_seq": 1000
+  }
+}
