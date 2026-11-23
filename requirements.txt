@@ -1,3 +1,2 @@
-# OrderFlow Requirements
-pymongo>=4.6.0
-bson>=0.5.10
+pymongo[srv]>=4.6.0
+dnspython>=2.0.0
