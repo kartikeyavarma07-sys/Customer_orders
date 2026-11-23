@@ -1,6 +1,9 @@
 """
-Full-featured HTTP Web Server and REST API for Customer, Item, and Order Management.
-Uses Python standard library HTTPServer with PyMongo and MongoDB database integration.
+Full-featured Web Application and REST API for Customer, Item, and Order Management.
+Implements a standard WSGI callable (`app` and `application`) compatible with:
+- Vercel Serverless Functions
+- Render / Gunicorn / Docker
+- Local standalone execution (`python app.py`)
 """
 
 import os
@@ -8,221 +11,223 @@ import sys
 import json
 import mimetypes
 import urllib.parse
-from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 import logging
 
 import controllers
 from db import db_manager
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger("OrderApp.Server")
+logger = logging.getLogger("OrderApp")
 
 PORT = int(os.getenv("PORT", 5000))
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
 
-class AppRequestHandler(SimpleHTTPRequestHandler):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, directory=STATIC_DIR, **kwargs)
+def app(environ, start_response):
+    """Standard WSGI entrypoint required by Vercel, Gunicorn, and WSGI servers."""
+    method = environ.get("REQUEST_METHOD", "GET").upper()
+    raw_path = environ.get("PATH_INFO", "/")
+    path = raw_path.rstrip("/")
+    if not path:
+        path = "/"
 
-    def _send_json(self, data, status_code=200):
-        self.send_response(status_code)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
-        self.end_headers()
-        self.wfile.write(json.dumps(data, default=str).encode("utf-8"))
+    # Handle CORS Preflight
+    if method == "OPTIONS":
+        headers = [
+            ("Access-Control-Allow-Origin", "*"),
+            ("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS"),
+            ("Access-Control-Allow-Headers", "Content-Type, Authorization"),
+        ]
+        start_response("204 No Content", headers)
+        return [b""]
 
-    def _read_json_body(self):
+    def send_json(data, status_code=200):
+        status_map = {
+            200: "200 OK",
+            201: "201 Created",
+            204: "204 No Content",
+            400: "400 Bad Request",
+            404: "404 Not Found",
+            409: "409 Conflict",
+            500: "500 Internal Server Error"
+        }
+        status_text = status_map.get(status_code, f"{status_code} Status")
+        body = json.dumps(data, default=str).encode("utf-8")
+        headers = [
+            ("Content-Type", "application/json; charset=utf-8"),
+            ("Access-Control-Allow-Origin", "*"),
+            ("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS"),
+            ("Access-Control-Allow-Headers", "Content-Type, Authorization"),
+            ("Content-Length", str(len(body)))
+        ]
+        start_response(status_text, headers)
+        return [body]
+
+    def read_json():
         try:
-            content_length = int(self.headers.get("Content-Length", 0))
-            if content_length <= 0:
+            length = int(environ.get("CONTENT_LENGTH", 0) or 0)
+            if length <= 0:
                 return {}
-            raw_body = self.rfile.read(content_length).decode("utf-8")
-            return json.loads(raw_body)
+            raw = environ["wsgi.input"].read(length).decode("utf-8")
+            return json.loads(raw)
         except Exception as e:
             logger.error(f"Failed to parse JSON body: {e}")
             return None
 
-    def do_OPTIONS(self):
-        self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
-        self.end_headers()
+    query_params = urllib.parse.parse_qs(environ.get("QUERY_STRING", ""))
+
+    def q(key, default=None):
+        return query_params.get(key, [default])[0]
 
     # ---------------------------------------------------------
-    # GET Requests
+    # REST API Routing
     # ---------------------------------------------------------
-    def do_GET(self):
-        parsed = urllib.parse.urlparse(self.path)
-        path = parsed.path.rstrip("/")
-        query_params = urllib.parse.parse_qs(parsed.query)
+    if path == "/api/status" and method == "GET":
+        return send_json(db_manager.get_status())
 
-        def q(key, default=None):
-            return query_params.get(key, [default])[0]
+    elif path == "/api/dashboard" and method == "GET":
+        return send_json(controllers.get_dashboard_summary())
 
-        # REST API Routes
-        if path == "/api/status":
-            return self._send_json(db_manager.get_status())
+    elif path == "/api/customers":
+        if method == "GET":
+            return send_json(controllers.get_all_customers(q("search")))
+        elif method == "POST":
+            data = read_json()
+            if data is None:
+                return send_json({"error": "Malformed JSON payload"}, 400)
+            res, code = controllers.create_customer(data)
+            return send_json(res, code)
 
-        elif path == "/api/dashboard":
-            return self._send_json(controllers.get_dashboard_summary())
-
-        elif path == "/api/customers":
-            search = q("search")
-            return self._send_json(controllers.get_all_customers(search))
-
-        elif path.startswith("/api/customers/"):
-            cust_id = path.split("/api/customers/")[1]
+    elif path.startswith("/api/customers/"):
+        cust_id = path.split("/api/customers/")[1]
+        if method == "GET":
             cust = controllers.get_customer_by_id(cust_id)
             if cust:
-                return self._send_json(cust)
-            return self._send_json({"error": "Customer not found"}, 404)
+                return send_json(cust)
+            return send_json({"error": "Customer not found"}, 404)
+        elif method == "PUT":
+            data = read_json()
+            if data is None:
+                return send_json({"error": "Malformed JSON payload"}, 400)
+            res, code = controllers.update_customer(cust_id, data)
+            return send_json(res, code)
+        elif method == "DELETE":
+            res, code = controllers.delete_customer(cust_id)
+            return send_json(res, code)
 
-        elif path == "/api/items":
-            search = q("search")
-            category = q("category")
-            return self._send_json(controllers.get_all_items(search, category))
+    elif path == "/api/items":
+        if method == "GET":
+            return send_json(controllers.get_all_items(q("search"), q("category")))
+        elif method == "POST":
+            data = read_json()
+            if data is None:
+                return send_json({"error": "Malformed JSON payload"}, 400)
+            res, code = controllers.create_item(data)
+            return send_json(res, code)
 
-        elif path.startswith("/api/items/"):
-            item_code = path.split("/api/items/")[1]
+    elif path.startswith("/api/items/"):
+        item_code = path.split("/api/items/")[1]
+        if method == "GET":
             item = controllers.get_item_by_code(item_code)
             if item:
-                return self._send_json(item)
-            return self._send_json({"error": "Item not found"}, 404)
-
-        elif path == "/api/orders":
-            search = q("search")
-            status = q("status")
-            return self._send_json(controllers.get_all_orders(search, status))
-
-        elif path.startswith("/api/orders/"):
-            order_num = path.split("/api/orders/")[1]
-            order = controllers.get_order_by_number(order_num)
-            if order:
-                return self._send_json(order)
-            return self._send_json({"error": "Order not found"}, 404)
-
-        # Fallback to serving static UI files
-        if path == "" or path == "/":
-            self.path = "/index.html"
-        return super().do_GET()
-
-    # ---------------------------------------------------------
-    # POST Requests
-    # ---------------------------------------------------------
-    def do_POST(self):
-        parsed = urllib.parse.urlparse(self.path)
-        path = parsed.path.rstrip("/")
-        data = self._read_json_body()
-
-        if data is None:
-            return self._send_json({"error": "Malformed JSON payload"}, 400)
-
-        if path == "/api/customers":
-            res, code = controllers.create_customer(data)
-            return self._send_json(res, code)
-
-        elif path == "/api/items":
-            res, code = controllers.create_item(data)
-            return self._send_json(res, code)
-
-        elif path == "/api/orders":
-            res, code = controllers.create_order(data)
-            return self._send_json(res, code)
-
-        elif path == "/api/db/reconnect":
-            db_manager.connect(force=True)
-            return self._send_json(db_manager.get_status())
-
-        else:
-            return self._send_json({"error": f"Endpoint not found: {path}"}, 404)
-
-    # ---------------------------------------------------------
-    # PUT Requests
-    # ---------------------------------------------------------
-    def do_PUT(self):
-        parsed = urllib.parse.urlparse(self.path)
-        path = parsed.path.rstrip("/")
-        data = self._read_json_body()
-
-        if data is None:
-            return self._send_json({"error": "Malformed JSON payload"}, 400)
-
-        if path.startswith("/api/customers/"):
-            cust_id = path.split("/api/customers/")[1]
-            res, code = controllers.update_customer(cust_id, data)
-            return self._send_json(res, code)
-
-        elif path.startswith("/api/items/"):
-            item_code = path.split("/api/items/")[1]
+                return send_json(item)
+            return send_json({"error": "Item not found"}, 404)
+        elif method == "PUT":
+            data = read_json()
+            if data is None:
+                return send_json({"error": "Malformed JSON payload"}, 400)
             res, code = controllers.update_item(item_code, data)
-            return self._send_json(res, code)
-
-        else:
-            return self._send_json({"error": f"Endpoint not found: {path}"}, 404)
-
-    # ---------------------------------------------------------
-    # PATCH Requests
-    # ---------------------------------------------------------
-    def do_PATCH(self):
-        parsed = urllib.parse.urlparse(self.path)
-        path = parsed.path.rstrip("/")
-        data = self._read_json_body()
-
-        if data is None:
-            return self._send_json({"error": "Malformed JSON payload"}, 400)
-
-        if path.startswith("/api/orders/") and path.endswith("/status"):
-            parts = path.split("/")
-            order_num = parts[3]
-            res, code = controllers.update_order_status(
-                order_num,
-                data.get("status"),
-                data.get("payment_status")
-            )
-            return self._send_json(res, code)
-
-        else:
-            return self._send_json({"error": f"Endpoint not found: {path}"}, 404)
-
-    # ---------------------------------------------------------
-    # DELETE Requests
-    # ---------------------------------------------------------
-    def do_DELETE(self):
-        parsed = urllib.parse.urlparse(self.path)
-        path = parsed.path.rstrip("/")
-
-        if path.startswith("/api/customers/"):
-            cust_id = path.split("/api/customers/")[1]
-            res, code = controllers.delete_customer(cust_id)
-            return self._send_json(res, code)
-
-        elif path.startswith("/api/items/"):
-            item_code = path.split("/api/items/")[1]
+            return send_json(res, code)
+        elif method == "DELETE":
             res, code = controllers.delete_item(item_code)
-            return self._send_json(res, code)
+            return send_json(res, code)
 
+    elif path == "/api/orders":
+        if method == "GET":
+            return send_json(controllers.get_all_orders(q("search"), q("status")))
+        elif method == "POST":
+            data = read_json()
+            if data is None:
+                return send_json({"error": "Malformed JSON payload"}, 400)
+            res, code = controllers.create_order(data)
+            return send_json(res, code)
+
+    elif path.startswith("/api/orders/"):
+        parts = path.split("/")
+        if len(parts) >= 4 and parts[3]:
+            order_num = parts[3]
+            if len(parts) == 5 and parts[4] == "status" and method == "PATCH":
+                data = read_json()
+                if data is None:
+                    return send_json({"error": "Malformed JSON payload"}, 400)
+                res, code = controllers.update_order_status(
+                    order_num,
+                    data.get("status"),
+                    data.get("payment_status")
+                )
+                return send_json(res, code)
+            elif len(parts) == 4 and method == "GET":
+                order = controllers.get_order_by_number(order_num)
+                if order:
+                    return send_json(order)
+                return send_json({"error": "Order not found"}, 404)
+
+    elif path == "/api/db/reconnect" and method == "POST":
+        db_manager.connect(force=True)
+        return send_json(db_manager.get_status())
+
+    # ---------------------------------------------------------
+    # Static File Serving (HTML, CSS, JS)
+    # ---------------------------------------------------------
+    if method == "GET":
+        if path == "/" or path == "/index.html":
+            file_path = os.path.join(STATIC_DIR, "index.html")
         else:
-            return self._send_json({"error": f"Endpoint not found: {path}"}, 404)
+            rel = path.lstrip("/").replace("/", os.sep)
+            file_path = os.path.join(STATIC_DIR, rel)
+
+        if os.path.exists(file_path) and os.path.isfile(file_path):
+            mime_type, _ = mimetypes.guess_type(file_path)
+            if not mime_type:
+                mime_type = "application/octet-stream"
+            with open(file_path, "rb") as f:
+                content = f.read()
+            headers = [
+                ("Content-Type", mime_type),
+                ("Content-Length", str(len(content))),
+                ("Access-Control-Allow-Origin", "*"),
+            ]
+            start_response("200 OK", headers)
+            return [content]
+
+    # Fallback 404
+    start_response("404 Not Found", [("Content-Type", "text/plain")])
+    return [b"Not Found"]
+
+
+# Alias for WSGI platforms (Vercel, Gunicorn, uWSGI)
+application = app
+handler = app
 
 
 def run_server(port=PORT):
-    server_address = ("0.0.0.0", port)
-    httpd = ThreadingHTTPServer(server_address, AppRequestHandler)
-    print(f"============================================================")
-    print(f" Order & Inventory Management Web Application")
+    from socketserver import ThreadingMixIn
+    from wsgiref.simple_server import WSGIServer, make_server
+
+    class ThreadedWSGIServer(ThreadingMixIn, WSGIServer):
+        daemon_threads = True
+
+    print("============================================================")
+    print(" Order & Inventory Management Web Application")
     print(f" Running at: http://localhost:{port}")
     print(f" Database Status: {db_manager.get_status()['engine']}")
-    print(f" Press Ctrl+C to stop the server")
-    print(f"============================================================")
-    try:
-        httpd.serve_forever()
-    except KeyboardInterrupt:
-        print("\nServer shutting down gracefully.")
-        httpd.server_close()
+    print(" Press Ctrl+C to stop the server")
+    print("============================================================")
+    with make_server("0.0.0.0", port, app, server_class=ThreadedWSGIServer) as httpd:
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            print("\nServer shutting down gracefully.")
 
 
 if __name__ == "__main__":
