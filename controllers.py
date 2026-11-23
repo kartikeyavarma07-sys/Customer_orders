@@ -8,17 +8,16 @@ Controllers module containing the core business logic for:
 
 import time
 from datetime import datetime
-from bson import ObjectId
 from db import db_manager
 
 
 def _serialize(doc):
-    """Serialize MongoDB or local store document to JSON-compatible dict."""
+    """Serialize database record or local store document to JSON-compatible dict."""
     if not doc:
         return None
     d = dict(doc)
-    if "_id" in d:
-        d["_id"] = str(d["_id"])
+    if "_id" in d and "id" not in d:
+        d["id"] = d["_id"]
     return d
 
 

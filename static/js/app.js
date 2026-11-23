@@ -122,13 +122,14 @@ async function checkDbStatus() {
   try {
     const res = await fetch('/api/status');
     const data = await res.json();
-    if (data.connected_to_mongodb) {
+    const isConnected = data.connected_to_mysql || data.connected_to_mongodb;
+    if (isConnected) {
       dot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-500';
-      text.innerText = 'MongoDB Active';
-      text.parentElement.title = `Connected to MongoDB: ${data.database_name}`;
+      text.innerText = data.connected_to_mysql ? 'MySQL Active' : 'DB Active';
+      text.parentElement.title = `Connected: ${data.database_name} (${data.engine})`;
     } else {
       dot.className = 'w-2.5 h-2.5 rounded-full bg-amber-500';
-      text.innerText = 'Local Store (Mongo Offline)';
+      text.innerText = 'Local Store (DB Offline)';
       text.parentElement.title = data.message + ' (Click to retry)';
     }
   } catch (err) {
@@ -145,13 +146,14 @@ async function reconnectDb() {
   try {
     const res = await fetch('/api/db/reconnect', { method: 'POST' });
     const data = await res.json();
-    if (data.connected_to_mongodb) {
+    const isConnected = data.connected_to_mysql || data.connected_to_mongodb;
+    if (isConnected) {
       if (dot) dot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-500';
       if (text) {
-        text.innerText = 'MongoDB Active';
-        text.parentElement.title = `Connected to MongoDB: ${data.database_name}`;
+        text.innerText = data.connected_to_mysql ? 'MySQL Active' : 'DB Active';
+        text.parentElement.title = `Connected: ${data.database_name} (${data.engine})`;
       }
-      showToast('Successfully connected to MongoDB server!', 'success');
+      showToast(`Successfully connected to ${data.engine}!`, 'success');
       loadDashboard();
       loadCustomers();
       loadItems();
@@ -159,10 +161,10 @@ async function reconnectDb() {
     } else {
       if (dot) dot.className = 'w-2.5 h-2.5 rounded-full bg-amber-500';
       if (text) {
-        text.innerText = 'Local Store (Mongo Offline)';
+        text.innerText = 'Local Store (DB Offline)';
         text.parentElement.title = data.message + ' (Click to retry)';
       }
-      showToast('MongoDB server not reachable. Running in Local Store mode.', 'warning');
+      showToast(data.message || 'Database not reachable. Running in Local Store mode.', 'warning');
     }
   } catch (err) {
     if (dot) dot.className = 'w-2.5 h-2.5 rounded-full bg-rose-500';

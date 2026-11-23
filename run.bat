@@ -2,7 +2,7 @@
 title OrderFlow Server
 echo ========================================================
 echo   Starting OrderFlow Web Application
-echo   Customer, Item & Order Management (MongoDB)
+echo   Customer, Item & Order Management (MySQL)
 echo ========================================================
 echo.
 

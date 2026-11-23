@@ -1,7 +1,7 @@
 # PowerShell Launch Script for OrderFlow
 Write-Host "========================================================" -ForegroundColor Cyan
 Write-Host "  Starting OrderFlow Web Application" -ForegroundColor Cyan
-Write-Host "  Customer, Item & Order Management (MongoDB)" -ForegroundColor Cyan
+Write-Host "  Customer, Item & Order Management (MySQL)" -ForegroundColor Cyan
 Write-Host "========================================================" -ForegroundColor Cyan
 Write-Host ""
 
