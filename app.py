@@ -23,8 +23,8 @@ PORT = int(os.getenv("PORT", 5000))
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
 
-def app(environ, start_response):
-    """Standard WSGI entrypoint required by Vercel, Gunicorn, and WSGI servers."""
+def _handle_request(environ, start_response):
+    """Internal WSGI request router."""
     method = environ.get("REQUEST_METHOD", "GET").upper()
     raw_path = environ.get("PATH_INFO", "/")
     path = raw_path.rstrip("/")
@@ -205,6 +205,24 @@ def app(environ, start_response):
     return [b"Not Found"]
 
 
+def app(environ, start_response):
+    """Standard WSGI entrypoint required by Vercel, Gunicorn, and WSGI servers."""
+    try:
+        return _handle_request(environ, start_response)
+    except Exception as e:
+        logger.error(f"Internal server error handling {environ.get('PATH_INFO')}: {e}", exc_info=True)
+        body = json.dumps({"error": "Internal Server Error", "details": str(e)}).encode("utf-8")
+        try:
+            start_response("500 Internal Server Error", [
+                ("Content-Type", "application/json; charset=utf-8"),
+                ("Access-Control-Allow-Origin", "*"),
+                ("Content-Length", str(len(body)))
+            ])
+            return [body]
+        except Exception:
+            return [body]
+
+
 # Alias for WSGI platforms (Vercel, Gunicorn, uWSGI)
 application = app
 handler = app
@@ -216,6 +234,10 @@ def run_server(port=PORT):
 
     class ThreadedWSGIServer(ThreadingMixIn, WSGIServer):
         daemon_threads = True
+
+        def handle_error(self, request, client_address):
+            # Suppress noisy broken pipe errors from browser cancellations
+            pass
 
     print("============================================================")
     print(" Order & Inventory Management Web Application")

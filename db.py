@@ -266,7 +266,7 @@ class LocalCollection:
 
 
 # -------------------------------------------------------------
-# MYSQL DATABASE ENGINE (PyMySQL)
+# MYSQL DATABASE ENGINE (PyMySQL) - Thread-Safe & Resilient
 # -------------------------------------------------------------
 class MySQLCollection:
     """Provides MongoDB-compatible CRUD interface on top of native MySQL relational tables."""
@@ -277,6 +277,8 @@ class MySQLCollection:
     def _execute(self, query, params=None, fetch="all"):
         for attempt in range(2):
             conn = self.mgr._get_connection()
+            if conn is None:
+                raise ConnectionError("MySQL connection unavailable")
             try:
                 with conn.cursor() as cur:
                     cur.execute(query, params or ())
@@ -293,59 +295,63 @@ class MySQLCollection:
                     conn.rollback()
                 except Exception:
                     pass
+                self.mgr.reset_thread_conn()
                 if attempt == 0:
-                    self.mgr.connect(force=True)
                     continue
                 raise e
 
     def find(self, filter_query=None, sort=None):
-        sql = f"SELECT * FROM `{self.table}`"
-        params = []
-        clauses = []
+        try:
+            sql = f"SELECT * FROM `{self.table}`"
+            params = []
+            clauses = []
 
-        # Special handling for checking items inside active orders
-        if self.table == "orders" and filter_query and "items.item_code" in filter_query:
-            item_code = filter_query["items.item_code"]
-            status_clause = ""
-            if "status" in filter_query and isinstance(filter_query["status"], dict) and "$ne" in filter_query["status"]:
-                status_clause = " AND o.status != %s"
-                params = [item_code, filter_query["status"]["$ne"]]
-            else:
-                params = [item_code]
-            
-            sql = f"""
-                SELECT o.* FROM orders o
-                JOIN order_items oi ON o.order_number = oi.order_number
-                WHERE oi.item_code = %s {status_clause}
-            """
-            rows = self._execute(sql, params, fetch="all")
-            return self._enrich_orders(rows)
-
-        if filter_query:
-            for k, v in filter_query.items():
-                if isinstance(v, dict):
-                    if "$ne" in v:
-                        clauses.append(f"`{k}` != %s")
-                        params.append(v["$ne"])
+            # Special handling for checking items inside active orders
+            if self.table == "orders" and filter_query and "items.item_code" in filter_query:
+                item_code = filter_query["items.item_code"]
+                status_clause = ""
+                if "status" in filter_query and isinstance(filter_query["status"], dict) and "$ne" in filter_query["status"]:
+                    status_clause = " AND o.status != %s"
+                    params = [item_code, filter_query["status"]["$ne"]]
                 else:
-                    clauses.append(f"`{k}` = %s")
-                    params.append(v)
+                    params = [item_code]
+                
+                sql = f"""
+                    SELECT o.* FROM orders o
+                    JOIN order_items oi ON o.order_number = oi.order_number
+                    WHERE oi.item_code = %s {status_clause}
+                """
+                rows = self._execute(sql, params, fetch="all")
+                return self._enrich_orders(rows)
 
-        if clauses:
-            sql += " WHERE " + " AND ".join(clauses)
+            if filter_query:
+                for k, v in filter_query.items():
+                    if isinstance(v, dict):
+                        if "$ne" in v:
+                            clauses.append(f"`{k}` != %s")
+                            params.append(v["$ne"])
+                    else:
+                        clauses.append(f"`{k}` = %s")
+                        params.append(v)
 
-        if sort:
-            sort_clauses = []
-            for col, direction in sort:
-                dir_str = "DESC" if direction < 0 else "ASC"
-                sort_clauses.append(f"`{col}` {dir_str}")
-            if sort_clauses:
-                sql += " ORDER BY " + ", ".join(sort_clauses)
+            if clauses:
+                sql += " WHERE " + " AND ".join(clauses)
 
-        rows = self._execute(sql, params, fetch="all")
-        if self.table == "orders":
-            return self._enrich_orders(rows)
-        return [dict(r) for r in rows]
+            if sort:
+                sort_clauses = []
+                for col, direction in sort:
+                    dir_str = "DESC" if direction < 0 else "ASC"
+                    sort_clauses.append(f"`{col}` {dir_str}")
+                if sort_clauses:
+                    sql += " ORDER BY " + ", ".join(sort_clauses)
+
+            rows = self._execute(sql, params, fetch="all")
+            if self.table == "orders":
+                return self._enrich_orders(rows)
+            return [dict(r) for r in rows]
+        except Exception as e:
+            logger.warning(f"MySQL find() on '{self.table}' failed ({e}). Falling back to local store.")
+            return self.mgr.local_store.get_collection(self.table).find(filter_query, sort)
 
     def _enrich_orders(self, orders):
         """Attach line items to order dictionaries from order_items table."""
@@ -354,13 +360,15 @@ class MySQLCollection:
         enriched = []
         for o in orders:
             od = dict(o)
-            # Fetch line items
-            items = self._execute(
-                "SELECT item_code, name, category, price, quantity, subtotal FROM order_items WHERE order_number = %s",
-                (od["order_number"],),
-                fetch="all"
-            )
-            od["items"] = [dict(it) for it in items]
+            try:
+                items = self._execute(
+                    "SELECT item_code, name, category, price, quantity, subtotal FROM order_items WHERE order_number = %s",
+                    (od["order_number"],),
+                    fetch="all"
+                )
+                od["items"] = [dict(it) for it in items]
+            except Exception:
+                od["items"] = []
             enriched.append(od)
         return enriched
 
@@ -370,230 +378,290 @@ class MySQLCollection:
 
     def insert_one(self, document):
         doc = dict(document)
-        # Orders table special handling: insert into orders & order_items
-        if self.table == "orders":
-            items = doc.pop("items", [])
-            cols = [k for k in doc.keys() if k not in ("_id", "id")]
-            col_names = ", ".join(f"`{c}`" for c in cols)
-            placeholders = ", ".join("%s" for _ in cols)
-            val_tuple = tuple(doc[c] for c in cols)
-            sql = f"INSERT INTO `orders` ({col_names}) VALUES ({placeholders})"
-            
+        for attempt in range(2):
             conn = self.mgr._get_connection()
+            if conn is None:
+                return self.mgr.local_store.get_collection(self.table).insert_one(document)
             try:
                 with conn.cursor() as cur:
-                    cur.execute(sql, val_tuple)
-                    inserted_id = cur.lastrowid
-                    # Insert order_items
-                    for it in items:
-                        cur.execute(
-                            """INSERT INTO order_items (order_number, item_code, name, category, price, quantity, subtotal)
-                               VALUES (%s, %s, %s, %s, %s, %s, %s)""",
-                            (doc["order_number"], it.get("item_code"), it.get("name"), it.get("category"),
-                             it.get("price"), it.get("quantity"), it.get("subtotal"))
-                        )
+                    if self.table == "orders":
+                        items = doc.pop("items", [])
+                        cols = [k for k in doc.keys() if k not in ("_id", "id")]
+                        col_names = ", ".join(f"`{c}`" for c in cols)
+                        placeholders = ", ".join("%s" for _ in cols)
+                        val_tuple = tuple(doc[c] for c in cols)
+                        sql = f"INSERT INTO `orders` ({col_names}) VALUES ({placeholders})"
+                        cur.execute(sql, val_tuple)
+                        inserted_id = cur.lastrowid
+                        for it in items:
+                            cur.execute(
+                                """INSERT INTO order_items (order_number, item_code, name, category, price, quantity, subtotal)
+                                   VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+                                (doc["order_number"], it.get("item_code"), it.get("name"), it.get("category"),
+                                 it.get("price"), it.get("quantity"), it.get("subtotal"))
+                            )
+                    else:
+                        cols = [k for k in doc.keys() if k not in ("_id", "id")]
+                        col_names = ", ".join(f"`{c}`" for c in cols)
+                        placeholders = ", ".join("%s" for _ in cols)
+                        val_tuple = tuple(doc[c] for c in cols)
+                        sql = f"INSERT INTO `{self.table}` ({col_names}) VALUES ({placeholders})"
+                        cur.execute(sql, val_tuple)
+                        inserted_id = cur.lastrowid
                 conn.commit()
                 class InsertResult:
                     def __init__(self, iid):
                         self.inserted_id = iid
                 return InsertResult(inserted_id)
             except Exception as e:
-                conn.rollback()
-                raise e
-
-        # Standard tables: customers, items
-        cols = [k for k in doc.keys() if k not in ("_id", "id")]
-        col_names = ", ".join(f"`{c}`" for c in cols)
-        placeholders = ", ".join("%s" for _ in cols)
-        val_tuple = tuple(doc[c] for c in cols)
-        sql = f"INSERT INTO `{self.table}` ({col_names}) VALUES ({placeholders})"
-        
-        conn = self.mgr._get_connection()
-        try:
-            with conn.cursor() as cur:
-                cur.execute(sql, val_tuple)
-                inserted_id = cur.lastrowid
-            conn.commit()
-            class InsertResult:
-                def __init__(self, iid):
-                    self.inserted_id = iid
-            return InsertResult(inserted_id)
-        except Exception as e:
-            conn.rollback()
-            raise e
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                self.mgr.reset_thread_conn()
+                if attempt == 0:
+                    continue
+                logger.warning(f"MySQL insert_one failed: {e}. Falling back to local store.")
+                return self.mgr.local_store.get_collection(self.table).insert_one(document)
 
     def update_one(self, filter_query, update_doc):
-        set_clauses = []
-        params = []
-        if "$set" in update_doc:
-            for k, v in update_doc["$set"].items():
-                if k not in ("_id", "id"):
-                    set_clauses.append(f"`{k}` = %s")
+        try:
+            set_clauses = []
+            params = []
+            if "$set" in update_doc:
+                for k, v in update_doc["$set"].items():
+                    if k not in ("_id", "id"):
+                        set_clauses.append(f"`{k}` = %s")
+                        params.append(v)
+            if "$inc" in update_doc:
+                for k, v in update_doc["$inc"].items():
+                    set_clauses.append(f"`{k}` = `{k}` + %s")
                     params.append(v)
-        if "$inc" in update_doc:
-            for k, v in update_doc["$inc"].items():
-                set_clauses.append(f"`{k}` = `{k}` + %s")
+
+            if not set_clauses:
+                class EmptyResult:
+                    modified_count = 0
+                return EmptyResult()
+
+            where_clauses = []
+            for k, v in filter_query.items():
+                where_clauses.append(f"`{k}` = %s")
                 params.append(v)
 
-        if not set_clauses:
-            class EmptyResult:
-                modified_count = 0
-            return EmptyResult()
-
-        where_clauses = []
-        for k, v in filter_query.items():
-            where_clauses.append(f"`{k}` = %s")
-            params.append(v)
-
-        sql = f"UPDATE `{self.table}` SET {', '.join(set_clauses)} WHERE {' AND '.join(where_clauses)} LIMIT 1"
-        rowcount = self._execute(sql, params, fetch="count")
-        class UpdateResult:
-            def __init__(self, count):
-                self.modified_count = count
-        return UpdateResult(rowcount)
+            sql = f"UPDATE `{self.table}` SET {', '.join(set_clauses)} WHERE {' AND '.join(where_clauses)} LIMIT 1"
+            rowcount = self._execute(sql, params, fetch="count")
+            class UpdateResult:
+                def __init__(self, count):
+                    self.modified_count = count
+            return UpdateResult(rowcount)
+        except Exception as e:
+            logger.warning(f"MySQL update_one failed: {e}. Falling back to local store.")
+            return self.mgr.local_store.get_collection(self.table).update_one(filter_query, update_doc)
 
     def delete_one(self, filter_query):
-        where_clauses = []
-        params = []
-        for k, v in filter_query.items():
-            where_clauses.append(f"`{k}` = %s")
-            params.append(v)
-
-        # For orders, also cascade delete from order_items
-        if self.table == "orders" and "order_number" in filter_query:
-            self._execute("DELETE FROM order_items WHERE order_number = %s", (filter_query["order_number"],), fetch="count")
-
-        sql = f"DELETE FROM `{self.table}` WHERE {' AND '.join(where_clauses)} LIMIT 1"
-        rowcount = self._execute(sql, params, fetch="count")
-        class DeleteResult:
-            def __init__(self, count):
-                self.deleted_count = count
-        return DeleteResult(rowcount)
-
-    def delete_many(self, filter_query=None):
-        if self.table == "orders" and not filter_query:
-            self._execute("DELETE FROM order_items", fetch="count")
-
-        if not filter_query:
-            sql = f"DELETE FROM `{self.table}`"
-            rowcount = self._execute(sql, fetch="count")
-        else:
+        try:
             where_clauses = []
             params = []
             for k, v in filter_query.items():
                 where_clauses.append(f"`{k}` = %s")
                 params.append(v)
-            sql = f"DELETE FROM `{self.table}` WHERE {' AND '.join(where_clauses)}"
-            rowcount = self._execute(sql, params, fetch="count")
 
-        class DeleteResult:
-            def __init__(self, count):
-                self.deleted_count = count
-        return DeleteResult(rowcount)
+            if self.table == "orders" and "order_number" in filter_query:
+                self._execute("DELETE FROM order_items WHERE order_number = %s", (filter_query["order_number"],), fetch="count")
+
+            sql = f"DELETE FROM `{self.table}` WHERE {' AND '.join(where_clauses)} LIMIT 1"
+            rowcount = self._execute(sql, params, fetch="count")
+            class DeleteResult:
+                def __init__(self, count):
+                    self.deleted_count = count
+            return DeleteResult(rowcount)
+        except Exception as e:
+            logger.warning(f"MySQL delete_one failed: {e}. Falling back to local store.")
+            return self.mgr.local_store.get_collection(self.table).delete_one(filter_query)
+
+    def delete_many(self, filter_query=None):
+        try:
+            if self.table == "orders" and not filter_query:
+                self._execute("DELETE FROM order_items", fetch="count")
+
+            if not filter_query:
+                sql = f"DELETE FROM `{self.table}`"
+                rowcount = self._execute(sql, fetch="count")
+            else:
+                where_clauses = []
+                params = []
+                for k, v in filter_query.items():
+                    where_clauses.append(f"`{k}` = %s")
+                    params.append(v)
+                sql = f"DELETE FROM `{self.table}` WHERE {' AND '.join(where_clauses)}"
+                rowcount = self._execute(sql, params, fetch="count")
+
+            class DeleteResult:
+                def __init__(self, count):
+                    self.deleted_count = count
+            return DeleteResult(rowcount)
+        except Exception as e:
+            logger.warning(f"MySQL delete_many failed: {e}. Falling back to local store.")
+            return self.mgr.local_store.get_collection(self.table).delete_many(filter_query)
 
     def count_documents(self, filter_query=None):
-        sql = f"SELECT COUNT(*) as cnt FROM `{self.table}`"
-        params = []
-        if filter_query:
-            clauses = []
-            for k, v in filter_query.items():
-                clauses.append(f"`{k}` = %s")
-                params.append(v)
-            sql += " WHERE " + " AND ".join(clauses)
-        res = self._execute(sql, params, fetch="one")
-        return res["cnt"] if res else 0
+        try:
+            sql = f"SELECT COUNT(*) as cnt FROM `{self.table}`"
+            params = []
+            if filter_query:
+                clauses = []
+                for k, v in filter_query.items():
+                    clauses.append(f"`{k}` = %s")
+                    params.append(v)
+                sql += " WHERE " + " AND ".join(clauses)
+            res = self._execute(sql, params, fetch="one")
+            if res:
+                return res.get("cnt", 0) if isinstance(res, dict) else res[0]
+            return 0
+        except Exception as e:
+            logger.warning(f"MySQL count_documents failed: {e}. Falling back to local store.")
+            return self.mgr.local_store.get_collection(self.table).count_documents(filter_query)
 
 
 class DatabaseManager:
     def __init__(self):
+        self._local = threading.local()
+        self._init_lock = threading.Lock()
         self.mysql_conn = None
         self.db = None
         self.is_connected = False
         self.connection_message = "Initializing..."
         self.last_connection_attempt = 0
-        self.reconnect_cooldown = 15
+        self.reconnect_cooldown = 10
         self.local_store = JSONDocumentStore(LOCAL_STORE_PATH)
         self.connect(force=True)
 
+    def reset_thread_conn(self):
+        """Close and reset MySQL connection for the current thread."""
+        conn = getattr(self._local, "conn", None)
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        self._local.conn = None
+
+    def _create_thread_conn(self):
+        """Instantiate a new dedicated connection for the calling thread."""
+        import pymysql
+        import pymysql.cursors
+        return pymysql.connect(
+            host=MYSQL_HOST,
+            port=MYSQL_PORT,
+            user=MYSQL_USER,
+            password=MYSQL_PASSWORD,
+            database=MYSQL_DB,
+            charset="utf8mb4",
+            cursorclass=pymysql.cursors.DictCursor,
+            connect_timeout=4,
+            autocommit=True
+        )
+
     def _get_connection(self):
-        if not self.is_connected or not self.mysql_conn:
-            self.connect(force=True)
+        """Get or initialize thread-local MySQL connection."""
+        if not self.is_connected:
+            self.connect(force=False)
+            if not self.is_connected:
+                return None
+
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            try:
+                conn.ping(reconnect=True)
+                conn.select_db(MYSQL_DB)
+                return conn
+            except Exception:
+                self.reset_thread_conn()
+
         try:
-            self.mysql_conn.ping(reconnect=True)
-            self.mysql_conn.select_db(MYSQL_DB)
-        except Exception:
-            self.connect(force=True)
-        return self.mysql_conn
+            conn = self._create_thread_conn()
+            self._local.conn = conn
+            return conn
+        except Exception as e:
+            logger.warning(f"Error establishing thread connection to MySQL: {e}")
+            self.reset_thread_conn()
+            return None
 
     def connect(self, force=False):
         now = time.time()
         if not force and not self.is_connected and (now - self.last_connection_attempt < self.reconnect_cooldown):
-            return
+            return self.is_connected
 
-        self.last_connection_attempt = now
-        try:
-            import pymysql
-            import pymysql.cursors
+        with self._init_lock:
+            now = time.time()
+            if not force and not self.is_connected and (now - self.last_connection_attempt < self.reconnect_cooldown):
+                return self.is_connected
 
-            # Step 1: Ensure database exists
+            self.last_connection_attempt = now
             try:
-                init_conn = pymysql.connect(
+                import pymysql
+                import pymysql.cursors
+
+                # Step 1: Ensure target database exists
+                try:
+                    init_conn = pymysql.connect(
+                        host=MYSQL_HOST,
+                        port=MYSQL_PORT,
+                        user=MYSQL_USER,
+                        password=MYSQL_PASSWORD,
+                        charset="utf8mb4",
+                        connect_timeout=3
+                    )
+                    with init_conn.cursor() as cur:
+                        cur.execute(f"CREATE DATABASE IF NOT EXISTS `{MYSQL_DB}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
+                    init_conn.commit()
+                    init_conn.close()
+                except Exception as ex:
+                    logger.warning(f"Database creation check: {ex}")
+
+                # Step 2: Establish test connection directly bound to target DB
+                test_conn = pymysql.connect(
                     host=MYSQL_HOST,
                     port=MYSQL_PORT,
                     user=MYSQL_USER,
                     password=MYSQL_PASSWORD,
+                    database=MYSQL_DB,
                     charset="utf8mb4",
-                    connect_timeout=3
+                    cursorclass=pymysql.cursors.DictCursor,
+                    connect_timeout=3,
+                    autocommit=True
                 )
-                with init_conn.cursor() as cur:
-                    cur.execute(f"CREATE DATABASE IF NOT EXISTS `{MYSQL_DB}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
-                init_conn.commit()
-                init_conn.close()
-            except Exception as ex:
-                logger.warning(f"Database creation check: {ex}")
 
-            # Step 2: Connect directly bound to MYSQL_DB
-            conn = pymysql.connect(
-                host=MYSQL_HOST,
-                port=MYSQL_PORT,
-                user=MYSQL_USER,
-                password=MYSQL_PASSWORD,
-                database=MYSQL_DB,
-                charset="utf8mb4",
-                cursorclass=pymysql.cursors.DictCursor,
-                connect_timeout=3,
-                autocommit=True
-            )
+                self._ensure_mysql_schema(test_conn)
+                self._sync_local_to_mysql(test_conn)
+                test_conn.close()
 
-            self.mysql_conn = conn
-            self.db = conn
-            self.is_connected = True
-            self.connection_message = f"Connected to MySQL database '{MYSQL_DB}' at {MYSQL_HOST}:{MYSQL_PORT}"
-            logger.info(self.connection_message)
+                self.is_connected = True
+                self.db = self
+                self.mysql_conn = True
+                self.connection_message = f"Connected to MySQL database '{MYSQL_DB}' at {MYSQL_HOST}:{MYSQL_PORT}"
+                logger.info(self.connection_message)
+                return True
 
-            self._ensure_mysql_schema()
-            self._sync_local_to_mysql()
+            except Exception as e:
+                self.is_connected = False
+                self.db = None
+                self.mysql_conn = None
+                err_msg = str(e)
+                if "Access denied" in err_msg:
+                    self.connection_message = (
+                        f"MySQL Access Denied for user '{MYSQL_USER}'@'{MYSQL_HOST}'. "
+                        f"Please update MYSQL_PASSWORD in .env. Running in Local Store Mode."
+                    )
+                else:
+                    self.connection_message = (
+                        f"MySQL server at {MYSQL_HOST}:{MYSQL_PORT} is unreachable ({type(e).__name__}). "
+                        "Operating in Local Persistent Store Mode. Data is safely saved to data/db_store.json."
+                    )
+                logger.warning(self.connection_message)
+                return False
 
-        except Exception as e:
-            self.is_connected = False
-            self.mysql_conn = None
-            err_msg = str(e)
-            if "Access denied" in err_msg:
-                self.connection_message = (
-                    f"MySQL Access Denied for user '{MYSQL_USER}'@'{MYSQL_HOST}'. "
-                    f"Please update MYSQL_PASSWORD in .env. Running in Local Store Mode."
-                )
-            else:
-                self.connection_message = (
-                    f"MySQL server at {MYSQL_HOST}:{MYSQL_PORT} is unreachable ({type(e).__name__}). "
-                    "Operating in Local Persistent Store Mode. Data is safely saved to data/db_store.json."
-                )
-            logger.warning(self.connection_message)
-
-    def _ensure_mysql_schema(self):
-        if not self.is_connected or not self.mysql_conn:
-            return
-        conn = self.mysql_conn
+    def _ensure_mysql_schema(self, conn):
         with conn.cursor() as cur:
             # Customers Table
             cur.execute("""
@@ -673,33 +741,48 @@ class DatabaseManager:
             """)
         conn.commit()
 
-    def _sync_local_to_mysql(self):
+    def _sync_local_to_mysql(self, conn):
         """Sync any existing records from local store into MySQL if MySQL was empty."""
         try:
-            cust_coll = self.get_collection("customers")
-            if cust_coll.count_documents({}) == 0:
-                local_custs = self.local_store.get_collection("customers").find()
-                for c in local_custs:
-                    try:
-                        cust_coll.insert_one(c)
-                    except Exception:
-                        pass
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) as cnt FROM `customers`")
+                row = cur.fetchone()
+                cnt = 0
+                if row:
+                    cnt = row.get("cnt", 0) if isinstance(row, dict) else row[0]
+                if cnt == 0:
+                    local_custs = self.local_store.get_collection("customers").find()
+                    for c in local_custs:
+                        cols = [k for k in c.keys() if k not in ("_id", "id")]
+                        if cols:
+                            col_str = ", ".join(f"`{k}`" for k in cols)
+                            placeholders = ", ".join("%s" for _ in cols)
+                            cur.execute(f"INSERT IGNORE INTO `customers` ({col_str}) VALUES ({placeholders})", tuple(c[k] for k in cols))
 
-                items_coll = self.get_collection("items")
-                local_items = self.local_store.get_collection("items").find()
-                for it in local_items:
-                    try:
-                        items_coll.insert_one(it)
-                    except Exception:
-                        pass
+                    local_items = self.local_store.get_collection("items").find()
+                    for it in local_items:
+                        cols = [k for k in it.keys() if k not in ("_id", "id")]
+                        if cols:
+                            col_str = ", ".join(f"`{k}`" for k in cols)
+                            placeholders = ", ".join("%s" for _ in cols)
+                            cur.execute(f"INSERT IGNORE INTO `items` ({col_str}) VALUES ({placeholders})", tuple(it[k] for k in cols))
 
-                orders_coll = self.get_collection("orders")
-                local_orders = self.local_store.get_collection("orders").find()
-                for od in local_orders:
-                    try:
-                        orders_coll.insert_one(od)
-                    except Exception:
-                        pass
+                    local_orders = self.local_store.get_collection("orders").find()
+                    for od in local_orders:
+                        items = od.get("items", [])
+                        cols = [k for k in od.keys() if k not in ("_id", "id", "items")]
+                        if cols:
+                            col_str = ", ".join(f"`{k}`" for k in cols)
+                            placeholders = ", ".join("%s" for _ in cols)
+                            cur.execute(f"INSERT IGNORE INTO `orders` ({col_str}) VALUES ({placeholders})", tuple(od[k] for k in cols))
+                        for item in items:
+                            cur.execute(
+                                """INSERT INTO order_items (order_number, item_code, name, category, price, quantity, subtotal)
+                                   VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+                                (od["order_number"], item.get("item_code"), item.get("name"), item.get("category"),
+                                 item.get("price"), item.get("quantity"), item.get("subtotal"))
+                            )
+                conn.commit()
         except Exception as e:
             logger.warning(f"Error syncing local data to MySQL: {e}")
 
@@ -707,7 +790,7 @@ class DatabaseManager:
         if not self.is_connected:
             self.connect(force=False)
 
-        if self.is_connected and self.mysql_conn:
+        if self.is_connected:
             return MySQLCollection(self, coll_name)
         return self.local_store.get_collection(coll_name)
 
