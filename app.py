@@ -84,7 +84,8 @@ def _handle_request(environ, start_response):
     # ---------------------------------------------------------
     if path == "/api/status" and method == "GET":
         return send_json(db_manager.get_status())
-
+    elif path == "/api/ping" and method == "GET":
+        return send_json({"message": "pong"})
     elif path == "/api/dashboard" and method == "GET":
         return send_json(controllers.get_dashboard_summary())
 
